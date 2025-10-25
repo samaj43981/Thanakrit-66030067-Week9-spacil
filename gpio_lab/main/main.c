@@ -1,63 +1,66 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/ledc.h"
+#include "driver/gpio.h"
 #include "esp_log.h"
 
-#define LED_GPIO        GPIO_NUM_2
-#define LEDC_TIMER      LEDC_TIMER_0
-#define LEDC_MODE       LEDC_LOW_SPEED_MODE
-#define LEDC_CHANNEL    LEDC_CHANNEL_0
-#define LEDC_DUTY_RES   LEDC_TIMER_13_BIT  // 8192 levels
-#define LEDC_FREQUENCY  5000               // 5kHz
-#define FADE_TIME       3000               // 3 วินาที
+// กำหนดขา GPIO สำหรับ LED ทั้ง 3 ดวง
+#define LED1_GPIO GPIO_NUM_2
+#define LED2_GPIO GPIO_NUM_4
+#define LED3_GPIO GPIO_NUM_5
+#define BLINK_PERIOD 500 // หน่วงเวลา 0.5 วินาที
 
-static const char *TAG = "PWM_BREATHING";
+static const char *TAG = "MULTIPLE_LEDS";
 
-void ledc_init(void) {
-    // Configure timer
-    ledc_timer_config_t ledc_timer = {
-        .duty_resolution = LEDC_DUTY_RES,
-        .freq_hz = LEDC_FREQUENCY,
-        .speed_mode = LEDC_MODE,
-        .timer_num = LEDC_TIMER,
-        .clk_cfg = LEDC_AUTO_CLK,
-    };
-    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
-
-    // Configure channel
-    ledc_channel_config_t ledc_channel = {
-        .channel    = LEDC_CHANNEL,
-        .duty       = 0,
-        .gpio_num   = LED_GPIO,
-        .speed_mode = LEDC_MODE,
-        .hpoint     = 0,
-        .timer_sel  = LEDC_TIMER,
-    };
-    ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+/**
+ * @brief กำหนดค่าเริ่มต้นสำหรับ GPIO ของ LED ทั้ง 3 ดวง
+ */
+void leds_init(void) {
+    ESP_LOGI(TAG, "Initializing LEDs on GPIO %d, %d, %d", LED1_GPIO, LED2_GPIO, LED3_GPIO);
     
-    // Initialize fade service
-    ESP_ERROR_CHECK(ledc_fade_func_install(0));
+    gpio_config_t io_conf = {
+        // ใช้ bit mask เพื่อกำหนดขา GPIO ทั้ง 3 ขาพร้อมกัน
+        .pin_bit_mask = (1ULL << LED1_GPIO) | (1ULL << LED2_GPIO) | (1ULL << LED3_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    ESP_ERROR_CHECK(gpio_config(&io_conf));
+
+    // ตั้งค่าเริ่มต้นให้ LED ทุกดวงดับ
+    gpio_set_level(LED1_GPIO, 0);
+    gpio_set_level(LED2_GPIO, 0);
+    gpio_set_level(LED3_GPIO, 0);
+
+    ESP_LOGI(TAG, "LEDs initialization completed");
+}
+
+/**
+ * @brief Task สำหรับทำให้ LED ติดทีละดวงเรียงกันไป
+ */
+void led_pattern_task(void *pvParameters) {
+    while (1) {
+        ESP_LOGI(TAG, "LED 1 ON");
+        gpio_set_level(LED1_GPIO, 1); // เปิด LED1
+        gpio_set_level(LED2_GPIO, 0);
+        gpio_set_level(LED3_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD));
+
+        ESP_LOGI(TAG, "LED 2 ON");
+        gpio_set_level(LED1_GPIO, 0);
+        gpio_set_level(LED2_GPIO, 1); // เปิด LED2
+        gpio_set_level(LED3_GPIO, 0);
+        vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD));
+
+        ESP_LOGI(TAG, "LED 3 ON");
+        gpio_set_level(LED1_GPIO, 0);
+        gpio_set_level(LED2_GPIO, 0);
+        gpio_set_level(LED3_GPIO, 1); // เปิด LED3
+        vTaskDelay(pdMS_TO_TICKS(BLINK_PERIOD));
+    }
 }
 
 void app_main(void) {
-    ESP_LOGI(TAG, "Starting PWM Breathing Effect");
-    
-    // Initialize PWM
-    ledc_init();
-    
-    while (1) {
-        // หายใจเข้า (Fade IN: 0% → 100%)
-        ESP_LOGI(TAG, "Breathing IN...");
-        ESP_ERROR_CHECK(ledc_set_fade_with_time(LEDC_MODE, 
-            LEDC_CHANNEL, 8191, FADE_TIME));
-        ESP_ERROR_CHECK(ledc_fade_start(LEDC_MODE, 
-            LEDC_CHANNEL, LEDC_FADE_WAIT_DONE));
-        
-        // หายใจออก (Fade OUT: 100% → 0%)
-        ESP_LOGI(TAG, "Breathing OUT...");
-        ESP_ERROR_CHECK(ledc_set_fade_with_time(LEDC_MODE, 
-            LEDC_CHANNEL, 0, FADE_TIME));
-        ESP_ERROR_CHECK(ledc_fade_start(LEDC_MODE, 
-            LEDC_CHANNEL, LEDC_FADE_WAIT_DONE));
-    }
+    leds_init();
+    xTaskCreate(led_pattern_task, "led_pattern_task", 2048, NULL, 5, NULL);
 }
