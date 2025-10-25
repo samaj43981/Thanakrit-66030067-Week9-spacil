@@ -1,0 +1,5 @@
+# ESP-IDF build output
+build/
+
+# SDK configuration
+sdkconfig
